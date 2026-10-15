@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snip &amp; Read ✂️ + File to PDF</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Pinned exact version so behavior doesn't change under you -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <!-- jsPDF for client-side PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Mammoth.js for .docx text extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <style>
+    body {
+      font-family: 'Quicksand', sans-serif;
+      color: #4A3E3D;
+      background-color: #FFF9F5;
+      background-image: radial-gradient(#FFD9CF 1.4px, transparent 1.4px);
+      background-size: 22px 22px;
+    }
+    h1, h2, .fredoka { font-family: 'Fredoka', sans-serif; }
+    .stitch { background: #fff; border: 2px dashed #FFC9D3; border-radius: 1.5rem; box-shadow: 0 0 0 6px #fff, 0 6px 0 6px #FFE8DD; }
+    .pill-btn { border-radius: 9999px; font-family: 'Fredoka', sans-serif; font-weight: 500; transition: transform .15s, background-color .15s; }
+    .pill-btn:hover:not(:disabled) { transform: translateY(-1px) rotate(-1deg); }
+    .pill-btn:active:not(:disabled) { transform: translateY(1px); }
+    .pill-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .pill-btn.active { box-shadow: inset 0 0 0 2px #4A3E3D; }
+    .tape { position: absolute; top: -14px; left: 50%; width: 90px; height: 26px; transform: translateX(-50%) rotate(-3deg);
+            background: repeating-linear-gradient(45deg, #FFC857cc 0 8px, #FFE29Acc 8px 16px); border-radius: 4px; }
+    #cropCanvas { touch-action: none; }
+    #cropCanvas.snip { cursor: crosshair; }
+    #cropCanvas.pan { cursor: grab; }
+    #cropCanvas.panning { cursor: grabbing; }
+    .chip { flex: 0 0 auto; width: 112px; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: #fff; border: 2px dashed #FFD9CF; border-radius: 1rem; text-align: left; cursor: pointer; transition: border-color .15s, background-color .15s; }
+    .chip:hover { border-color: #FF9EAA; }
+    .chip.on { border-color: #FF9EAA; background: #FFF3F5; box-shadow: 0 0 0 3px #FFE8DD; }
+    .chip img { width: 100%; height: 60px; object-fit: cover; border-radius: .65rem; background: #FFF9F5; }
+    .chip-name { font-size: 11px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .badge { font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 9999px; align-self: flex-start; white-space: nowrap; }
+    .badge-pending { background: #FFE8DD; color: #8A5A4A; }
+    .badge-working { background: #FFC85766; color: #6B4E00; }
+    .badge-done { background: #8EB8B544; color: #2F6360; }
+    .badge-error { background: #FFB7C5; color: #9B2C45; }
+    .modal-card { background: #FFF9F5; border: 2px dashed #FFC9D3; border-radius: 1.5rem; box-shadow: 0 0 0 6px #FFF9F5, 0 10px 40px rgba(74,62,61,.35); padding: 1.1rem; height: min(92vh, 900px); }
+    .modal-body { display: grid; gap: 1rem; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
+    .modal-body.two { grid-template-rows: minmax(0, 38%) minmax(0, 1fr); }
+    @media (min-width: 768px) { .modal-body.two { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr); } }
+    :focus-visible { outline: 3px solid #8EB8B5; outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) { .pill-btn { transition: none; } }
+
+    /* Tab switcher */
+    .tab-btn {
+      font-family: 'Fredoka', sans-serif;
+      font-weight: 600;
+      border-radius: 9999px;
+      padding: 0.55rem 1.25rem;
+      transition: all .18s;
+      border: 2px dashed transparent;
+    }
+    .tab-btn.active {
+      background: #FF9EAA;
+      color: #fff;
+      border-color: #E8798A;
+      box-shadow: 0 3px 0 #E8798A;
+    }
+    .tab-btn:not(.active) {
+      background: #FFE8DD;
+      color: #4A3E3D;
+      border-color: #FFD9CF;
+    }
+    .tab-btn:not(.active):hover {
+      background: #FFD9CC;
+      transform: translateY(-1px);
+    }
+    .pdf-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 0.75rem;
+      padding: 0.65rem 0.85rem;
+      background: #fff;
+      border: 2px dashed #FFD9CF;
+      border-radius: 1rem;
+      transition: border-color .15s, background .15s;
+    }
+    .pdf-row:hover { border-color: #FF9EAA; background: #FFF3F5; }
+    .pdf-row .fname { font-weight: 700; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+    .pdf-row .meta { font-size: 0.75rem; color: #7A6A68; }
+    .pdf-type {
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 9999px;
+    }
+    .pdf-type.img { background: #FFC85766; color: #6B4E00; }
+    .pdf-type.doc { background: #8EB8B544; color: #2F6360; }
+    .pdf-type.txt { background: #FFB7C544; color: #9B2C45; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="bg-[#FFE8DD] border-b-2 border-dashed border-[#FFB7C5] px-4 py-4">
+    <div class="max-w-6xl mx-auto flex flex-wrap gap-3 justify-between items-center">
+      <h1 class="text-2xl md:text-3xl font-bold text-[#FF9EAA] flex items-center gap-2">
+        🎀 Snip &amp; Read <span class="text-base font-medium text-[#4A3E3D]">+ File to PDF</span> ✨
+      </h1>
+      <span class="text-xs bg-[#8EB8B5]/25 text-[#3F6E6B] px-3 py-1.5 rounded-full border-2 border-dashed border-[#8EB8B5] font-semibold">
+        🌸 Your files stay in your browser
+      </span>
+    </div>
+    <!-- file:// warning, styled into the header -->
+    <div id="fileWarning" class="hidden max-w-6xl mx-auto mt-3 bg-[#FFC857]/30 border-2 border-dashed border-[#FFC857] text-[#6B4E00] text-sm px-4 py-2 rounded-2xl text-center">
+      ⚠️ You opened this as a local file (file://). OCR needs a web server. In VS Code, right-click the file and choose
+      <b>Open with Live Server</b>, or run <code class="bg-white px-1.5 rounded-md">python -m http.server 8000</code>.
+    </div>
+
+    <!-- Dual Mode Tabs -->
+    <div class="max-w-6xl mx-auto mt-4 flex flex-wrap gap-2 justify-center">
+      <button id="tabOcr" class="tab-btn active" type="button">✂️ Snip &amp; OCR (Image to Text)</button>
+      <button id="tabPdf" class="tab-btn" type="button">📄 File to PDF Converter</button>
+    </div>
+  </header>
+
+  <!-- ==================== TAB 1: OCR ==================== -->
+  <div id="panelOcr">
+  <main class="max-w-6xl mx-auto w-full p-4 md:p-8 flex-1 grid grid-cols-1 md:grid-cols-2 gap-8">
+
+    <!-- Left: input -->
+    <div class="flex flex-col gap-6">
+      <div id="dropZone" tabindex="0" role="button" aria-label="Upload images"
+           class="stitch relative p-6 text-center cursor-pointer flex flex-col items-center justify-center min-h-[200px] hover:bg-[#FFF3F5] transition">
+        <div class="tape"></div>
+        <div class="text-4xl mb-1">📝</div>
+        <p class="fredoka font-medium text-lg">Drop images here <span class="text-sm font-normal text-[#7A6A68]">(add as many as you like)</span></p>
+        <p class="text-sm text-[#7A6A68] mt-1">or click to browse, or paste with
+          <kbd class="bg-[#FFE8DD] px-2 py-0.5 rounded-full text-[#4A3E3D] font-semibold">Ctrl + V</kbd></p>
+        <input type="file" id="fileInput" accept="image/*" multiple class="hidden" />
+      </div>
+
+      <div id="previewContainer" class="hidden stitch relative flex-col gap-3 p-5">
+        <div class="tape" style="background: repeating-linear-gradient(45deg, #FFB7C5cc 0 8px, #FFD6DEcc 8px 16px);"></div>
+
+        <!-- Thumbnail queue (shown when 2+ images are loaded) -->
+        <div id="queueWrap" class="hidden pt-2">
+          <p class="fredoka font-semibold text-sm mb-1">🎀 Your pictures (<span id="queueCount">0</span>)</p>
+          <div id="queue" class="flex gap-2 overflow-x-auto pb-2" aria-label="Image queue"></div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <span class="fredoka font-semibold">🌸 Your picture</span>
+          <div class="flex flex-wrap gap-2">
+            <button id="rotateBtn" class="pill-btn text-sm bg-[#8EB8B5] hover:bg-[#7CA9A6] text-white px-4 py-1.5">🔄 Rotate</button>
+            <button id="clearBtn" class="pill-btn text-sm bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-4 py-1.5">Remove</button>
+            <button id="imgPdfBtn" class="pill-btn text-sm bg-[#FFB7C5] hover:bg-[#FF9EAA] text-[#4A3E3D] px-4 py-1.5">🖼️ Save Image as PDF</button>
+            <button id="exportAllBtn" class="hidden pill-btn text-sm bg-[#FFC857] hover:bg-[#FFBE3A] text-[#4A3E3D] px-4 py-1.5">📦 Export All as Single PDF</button>
+          </div>
+        </div>
+
+        <!-- Mode toggle -->
+        <div class="flex flex-wrap gap-2">
+          <button id="snipModeBtn" class="pill-btn active text-sm bg-[#FFC857] hover:bg-[#FFBE3A] text-[#4A3E3D] px-4 py-1.5">✂️ Snipping Mode</button>
+          <button id="fullModeBtn" class="pill-btn text-sm bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-4 py-1.5">🖼️ Full Image Mode</button>
+        </div>
+
+        <p id="modeHint" class="text-xs text-[#7A6A68]">✨ Drag on the picture to snip a word or sentence. Drag the corners to resize, or drag inside to move.</p>
+
+        <div id="canvasWrap" class="rounded-2xl bg-[#FFF9F5] border-2 border-dashed border-[#FFD9CF] flex items-center justify-center p-2 overflow-hidden">
+          <canvas id="cropCanvas" class="snip rounded-lg max-w-full"></canvas>
+        </div>
+
+        <!-- Zoom & pan controls -->
+        <div class="flex flex-wrap items-center gap-2 bg-[#FFF3F5] border-2 border-dashed border-[#FFD9CF] rounded-3xl px-3 py-2">
+          <span aria-hidden="true">🔍</span>
+          <button id="zoomOutBtn" aria-label="Zoom out" class="pill-btn w-8 h-8 bg-[#FFB7C5] hover:bg-[#FF9EAA] text-white text-lg leading-none">−</button>
+          <input id="zoomSlider" type="range" min="100" max="400" step="5" value="100" aria-label="Zoom level" class="flex-1 min-w-[90px] accent-[#FF9EAA]" />
+          <button id="zoomInBtn" aria-label="Zoom in" class="pill-btn w-8 h-8 bg-[#FFB7C5] hover:bg-[#FF9EAA] text-white text-lg leading-none">+</button>
+          <span id="zoomLabel" class="text-xs font-semibold w-11 text-center">100%</span>
+          <button id="zoomResetBtn" class="pill-btn text-xs bg-white border-2 border-dashed border-[#FF9EAA] text-[#D4607A] hover:bg-[#FFF9F5] px-3 py-1">Reset Zoom (100%)</button>
+          <button id="panToolBtn" class="pill-btn text-xs bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-3 py-1">✋ Pan</button>
+        </div>
+        <p class="text-xs text-[#7A6A68]">🔎 Scroll or double-click to zoom (Shift + double-click zooms out). When zoomed in, pan with ✋ Pan, hold Space, or right-click drag.</p>
+
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span id="cropInfo" class="text-xs bg-[#FFB7C5]/25 text-[#B04A62] px-3 py-1 rounded-full border-2 border-dashed border-[#FFB7C5] font-semibold">🖼️ Whole image selected</span>
+          <button id="resetCropBtn" class="pill-btn text-sm bg-white border-2 border-dashed border-[#FF9EAA] text-[#D4607A] hover:bg-[#FFF3F5] px-4 py-1.5">Reset Crop / Select Whole Image</button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 mt-1">
+          <label class="inline-flex items-center gap-2 cursor-pointer bg-[#8EB8B5]/20 border-2 border-dashed border-[#8EB8B5] rounded-full px-4 py-1.5 text-sm font-semibold">
+            <input id="cleanToggle" type="checkbox" checked class="accent-[#FF9EAA] w-4 h-4" />
+            🧹 Clean Text Only (Remove Noise &amp; Stray Symbols)
+          </label>
+          <select id="charMode" aria-label="Character mode"
+                  class="bg-white border-2 border-dashed border-[#8EB8B5] text-[#4A3E3D] text-sm rounded-full px-4 py-1.5 outline-none focus:border-[#FF9EAA] font-semibold">
+            <option value="standard" selected>Standard characters</option>
+            <option value="strict">Strict: A-Z a-z 0-9 . , ! ?</option>
+          </select>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 mt-1">
+          <select id="langSelect" aria-label="Language"
+                  class="bg-white border-2 border-dashed border-[#8EB8B5] text-[#4A3E3D] text-sm rounded-full px-4 py-2 outline-none focus:border-[#FF9EAA] font-semibold">
+            <option value="eng" selected>English (eng)</option>
+            <option value="fil">Filipino / Tagalog (fil)</option>
+            <option value="spa">Spanish (spa)</option>
+            <option value="fra">French (fra)</option>
+            <option value="deu">German (deu)</option>
+          </select>
+          <button id="extractAllBtn" class="hidden pill-btn flex-1 min-w-[160px] bg-[#FFC857] hover:bg-[#FFBE3A] text-[#4A3E3D] text-lg py-2.5 px-4 shadow-[0_4px_0_#E5A92F]">✨ Extract All Images</button>
+          <button id="extractBtn" class="pill-btn flex-1 bg-[#FF9EAA] hover:bg-[#FF8A98] text-white text-lg py-2.5 px-4 shadow-[0_4px_0_#E8798A]">
+            ✨ Extract Text
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: output -->
+    <div class="stitch relative flex flex-col p-5 self-start md:min-h-[460px]">
+      <div class="tape" style="background: repeating-linear-gradient(45deg, #8EB8B5cc 0 8px, #B7D6D3cc 8px 16px);"></div>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3 pt-1">
+        <h2 class="text-lg font-semibold">📝 Extracted Text</h2>
+        <div class="flex flex-wrap gap-2">
+          <button id="expandBtn" class="pill-btn text-sm bg-[#FF9EAA] hover:bg-[#FF8A98] text-white px-4 py-1.5">🔍 Expand View / Fullscreen</button>
+          <button id="copyBtn" class="pill-btn text-sm bg-[#FFC857] hover:bg-[#FFBE3A] text-[#4A3E3D] px-4 py-1.5">📋 Copy</button>
+          <button id="downloadBtn" class="pill-btn text-sm bg-[#8EB8B5] hover:bg-[#7CA9A6] text-white px-4 py-1.5">💾 Download .txt</button>
+          <button id="pdfBtn" class="pill-btn text-sm bg-[#FFB7C5] hover:bg-[#FF9EAA] text-[#4A3E3D] px-4 py-1.5">📄 Download PDF</button>
+        </div>
+      </div>
+
+      <div id="viewToggle" class="hidden flex-wrap gap-2 mb-3">
+        <button id="viewSingleBtn" class="pill-btn active text-sm bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-4 py-1.5">📄 This image</button>
+        <button id="viewAllBtn" class="pill-btn text-sm bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-4 py-1.5">📚 All images</button>
+      </div>
+
+      <div id="statusBox" class="hidden text-sm text-[#3F6E6B] mb-3 bg-[#8EB8B5]/20 px-3 py-2 rounded-2xl border-2 border-dashed border-[#8EB8B5]">
+        ✂️ <span id="statusText">Ready</span>
+        <div id="barWrap" class="hidden h-2 mt-2 bg-white/80 rounded-full overflow-hidden"><div id="barFill" class="h-full bg-[#FF9EAA] rounded-full" style="width:0%"></div></div>
+      </div>
+
+      <textarea id="outputText" placeholder="Your extracted text will appear here... 🌸"
+        class="w-full flex-1 min-h-[300px] bg-[#FFFCFA] border-2 border-dashed border-[#FFD9CF] rounded-2xl p-4 text-[#4A3E3D] text-base resize-none focus:outline-none focus:border-[#FF9EAA]"></textarea>
+    </div>
+  </main>
+
+  
+  <!-- Fullscreen proofreading modal -->
+  <div id="modal" class="hidden fixed inset-0 z-50 items-center justify-center p-3 md:p-8" style="background: rgba(74,62,61,.55)" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card flex flex-col w-full max-w-6xl gap-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="modalTitle" class="text-lg md:text-xl font-semibold">🔍 Proofreading view</h2>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="flex items-center gap-1 bg-[#FFF3F5] border-2 border-dashed border-[#FFD9CF] rounded-full px-2 py-1">
+            <button id="fontDownBtn" aria-label="Smaller text" class="pill-btn w-8 h-7 bg-[#FFB7C5] hover:bg-[#FF9EAA] text-white text-sm">A-</button>
+            <span id="fontLabel" class="text-xs font-semibold w-10 text-center">18px</span>
+            <button id="fontUpBtn" aria-label="Larger text" class="pill-btn w-8 h-7 bg-[#FFB7C5] hover:bg-[#FF9EAA] text-white text-sm">A+</button>
+          </div>
+          <button id="modalImgToggle" class="pill-btn text-sm bg-[#8EB8B5] hover:bg-[#7CA9A6] text-white px-4 py-1.5">🖼️ Hide image</button>
+          <button id="modalCopyBtn" class="pill-btn text-sm bg-[#FFC857] hover:bg-[#FFBE3A] text-[#4A3E3D] px-4 py-1.5">📋 Copy Text</button>
+          <button id="modalDownloadBtn" class="pill-btn text-sm bg-[#8EB8B5] hover:bg-[#7CA9A6] text-white px-4 py-1.5">💾 Download .txt</button>
+          <button id="modalPdfBtn" class="pill-btn text-sm bg-[#FFB7C5] hover:bg-[#FF9EAA] text-[#4A3E3D] px-4 py-1.5">📄 Download PDF</button>
+          <button id="modalCloseBtn" class="pill-btn text-sm bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-4 py-1.5">❌ Close <span class="text-xs opacity-70">(Esc)</span></button>
+        </div>
+      </div>
+      <div id="modalBody" class="modal-body two flex-1 min-h-0">
+        <section id="modalImgPane" class="flex flex-col min-h-0 rounded-2xl border-2 border-dashed border-[#FFD9CF] bg-white p-3">
+          <p id="modalCaption" class="text-xs font-semibold mb-2 truncate"></p>
+          <div class="flex-1 min-h-0 overflow-auto flex items-start justify-center">
+            <img id="modalImg" alt="The image area that was read" class="max-w-full h-auto rounded-lg" />
+          </div>
+        </section>
+        <textarea id="modalText" spellcheck="true" aria-label="Extracted text"
+          class="w-full h-full resize-none bg-white border-2 border-dashed border-[#FFD9CF] rounded-2xl p-4 leading-relaxed text-[#4A3E3D] focus:outline-none focus:border-[#FF9EAA]"></textarea>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /panelOcr -->
+
+  <!-- ==================== TAB 2: File to PDF Converter ==================== -->
+  <div id="panelPdf" class="hidden">
+    <main class="max-w-4xl mx-auto w-full p-4 md:p-8 flex flex-col gap-6">
+      <div id="pdfDropZone" tabindex="0" role="button" aria-label="Upload files for PDF conversion"
+           class="stitch relative p-8 text-center cursor-pointer flex flex-col items-center justify-center min-h-[180px] hover:bg-[#FFF3F5] transition">
+        <div class="tape"></div>
+        <div class="text-4xl mb-2">📄</div>
+        <p class="fredoka font-medium text-lg">Drop files here to convert to PDF</p>
+        <p class="text-sm text-[#7A6A68] mt-1">Images (PNG, JPG, WEBP, BMP) · Documents (DOCX, TXT)</p>
+        <p class="text-xs text-[#7A6A68] mt-1">or click to browse · multiple files allowed</p>
+        <input type="file" id="pdfFileInput" accept=".png,.jpg,.jpeg,.webp,.bmp,.docx,.doc,.txt,image/png,image/jpeg,image/webp,image/bmp,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple class="hidden" />
+      </div>
+      <div class="stitch relative p-5">
+        <div class="tape" style="background: repeating-linear-gradient(45deg, #8EB8B5cc 0 8px, #B7D6D3cc 8px 16px);"></div>
+        <h2 class="fredoka font-semibold text-lg mb-3 pt-1">⚙️ Page Formatting Options</h2>
+        <div class="flex flex-wrap gap-3 items-end">
+          <div class="flex flex-col gap-1">
+            <label for="pdfPageSize" class="text-xs font-semibold text-[#7A6A68]">Page Size</label>
+            <select id="pdfPageSize" class="bg-white border-2 border-dashed border-[#8EB8B5] text-[#4A3E3D] text-sm rounded-full px-4 py-2 outline-none focus:border-[#FF9EAA] font-semibold">
+              <option value="a4" selected>A4</option>
+              <option value="letter">Letter</option>
+            </select>
+          </div>
+          <div class="flex flex-col gap-1">
+            <label for="pdfOrientation" class="text-xs font-semibold text-[#7A6A68]">Orientation</label>
+            <select id="pdfOrientation" class="bg-white border-2 border-dashed border-[#8EB8B5] text-[#4A3E3D] text-sm rounded-full px-4 py-2 outline-none focus:border-[#FF9EAA] font-semibold">
+              <option value="portrait" selected>Portrait</option>
+              <option value="landscape">Landscape</option>
+            </select>
+          </div>
+          <div class="flex flex-col gap-1">
+            <label for="pdfMargins" class="text-xs font-semibold text-[#7A6A68]">Margins</label>
+            <select id="pdfMargins" class="bg-white border-2 border-dashed border-[#8EB8B5] text-[#4A3E3D] text-sm rounded-full px-4 py-2 outline-none focus:border-[#FF9EAA] font-semibold">
+              <option value="normal" selected>Normal</option>
+              <option value="narrow">Narrow</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+          <button id="pdfMergeBtn" class="pill-btn bg-[#FFC857] hover:bg-[#FFBE3A] text-[#4A3E3D] text-base py-2.5 px-5 shadow-[0_3px_0_#E5A92F] ml-auto" disabled>
+            📦 Merge &amp; Save All as 1 PDF
+          </button>
+        </div>
+      </div>
+      <div class="stitch relative p-5">
+        <div class="tape" style="background: repeating-linear-gradient(45deg, #FFB7C5cc 0 8px, #FFD6DEcc 8px 16px);"></div>
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3 pt-1">
+          <h2 class="fredoka font-semibold text-lg">📚 Conversion Queue (<span id="pdfQueueCount">0</span>)</h2>
+          <button id="pdfClearAllBtn" class="pill-btn text-sm bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-4 py-1.5 hidden">🗑️ Clear All</button>
+        </div>
+        <div id="pdfQueueEmpty" class="text-center text-[#7A6A68] py-8 text-sm">
+          No files yet. Drop or select files above to get started 🌸
+        </div>
+        <div id="pdfQueueList" class="flex flex-col gap-2"></div>
+      </div>
+      <div id="pdfStatusBox" class="hidden text-sm text-[#3F6E6B] bg-[#8EB8B5]/20 px-4 py-3 rounded-2xl border-2 border-dashed border-[#8EB8B5]">
+        <span id="pdfStatusText">Ready</span>
+      </div>
+    </main>
+  </div><!-- /panelPdf -->
+
+  <footer class="text-center text-xs text-[#7A6A68] pb-6 mt-auto">made with 🎀 glue, scissors, Tesseract.js &amp; Mammoth.js</footer>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const previewContainer = document.getElementById('previewContainer');
+    const extractBtn = document.getElementById('extractBtn');
+    const outputText = document.getElementById('outputText');
+    const statusBox = document.getElementById('statusBox');
+    const statusText = document.getElementById('statusText');
+    const copyBtn = document.getElementById('copyBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const rotateBtn = document.getElementById('rotateBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const langSelect = document.getElementById('langSelect');
+    const cropCanvas = document.getElementById('cropCanvas');
+    const cropCtx = cropCanvas.getContext('2d');
+    const snipModeBtn = document.getElementById('snipModeBtn');
+    const fullModeBtn = document.getElementById('fullModeBtn');
+    const resetCropBtn = document.getElementById('resetCropBtn');
+    const cropInfo = document.getElementById('cropInfo');
+    const modeHint = document.getElementById('modeHint');
+    const canvasWrap = document.getElementById('canvasWrap');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomLabel = document.getElementById('zoomLabel');
+    const zoomResetBtn = document.getElementById('zoomResetBtn');
+    const panToolBtn = document.getElementById('panToolBtn');
+    const cleanToggle = document.getElementById('cleanToggle');
+    const charMode = document.getElementById('charMode');
+    const $ = (id) => document.getElementById(id);
+    const queueWrap = $('queueWrap'), queue = $('queue'), queueCount = $('queueCount');
+    const extractAllBtn = $('extractAllBtn'), expandBtn = $('expandBtn');
+    const viewToggle = $('viewToggle'), viewSingleBtn = $('viewSingleBtn'), viewAllBtn = $('viewAllBtn');
+    const barWrap = $('barWrap'), barFill = $('barFill');
+    const modal = $('modal'), modalBody = $('modalBody'), modalImgPane = $('modalImgPane');
+    const modalImg = $('modalImg'), modalCaption = $('modalCaption'), modalText = $('modalText');
+    const modalImgToggle = $('modalImgToggle'), fontLabel = $('fontLabel');
+
+    let currentFile = null;
+    let rotationDegree = 0;
+    let srcImg = null;          // loaded Image element
+    let rotatedCanvas = null;   // full-resolution canvas with rotation applied
+    let snipMode = true;
+    let crop = null;            // {x, y, w, h} in rotatedCanvas pixel coordinates
+    let dw = 0, dh = 0;         // canvas viewport size in display px
+    let baseScale = 1;          // source px per display px at 100% zoom
+    let zoom = 1;               // 1 (100%) to 4 (400%)
+    let view = { x: 0, y: 0 };  // top-left of the viewport inside the zoomed image (display px)
+    let srcPerPx = 1;           // source px per viewport px = baseScale / zoom
+    let panTool = false;        // pan toggle (for touch / no-modifier use)
+    let spaceDown = false;
+
+    // Batch state: every loaded image is an item; globals above (crop, zoom, rotation...) mirror the active one
+    let items = [];             // {id, file, name, url, img, rotation, crop, zoom, view, status, text}
+    let active = null;
+    let itemId = 0, pasteCount = 0;
+    let outView = 'single';     // 'single' | 'all'
+    let allOverride = null;     // user edits made while viewing "All images"
+    let busy = false;
+    let batchIndex = 0, batchTotal = 0, batchLabel = '';
+
+    // Drag state
+    let drag = null;            // {type:'new'|'move'|'resize', ...}
+    const HANDLE = 10;          // handle hit radius (display px)
+    const MIN_CROP = 8;         // minimum crop size (display px)
+
+    // Warn if opened via file:// (web workers usually fail there)
+    if (location.protocol === 'file:') {
+      document.getElementById('fileWarning').classList.remove('hidden');
+    }
+
+    // Exact-version resource paths (must match the pinned script above)
+    const TESS_VERSION = '5.1.1';
+    const TESS_PATHS = {
+      workerPath: `https://cdn.jsdelivr.net/npm/tesseract.js@${TESS_VERSION}/dist/worker.min.js`,
+      corePath: `https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1`,
+      langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+    };
+
+    /* ---------- File selection / drag drop / paste ---------- */
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+    });
+    fileInput.addEventListener('change', (e) => { handleFiles(e.target.files); fileInput.value = ''; });
+
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('bg-[#FFF3F5]');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('bg-[#FFF3F5]'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('bg-[#FFF3F5]');
+      if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+    });
+
+    window.addEventListener('paste', (e) => {
+      if (!e.clipboardData) return;
+      if (document.getElementById('panelOcr') && document.getElementById('panelOcr').classList.contains('hidden')) return;
+      const files = [...e.clipboardData.items]
+        .filter((it) => it.type.startsWith('image/'))
+        .map((it) => it.getAsFile())
+        .filter(Boolean);
+      if (files.length) handleFiles(files);
+    });
+
+    /* ---------- Multi-file loading, queue & active image ---------- */
+    const BADGES = {
+      pending: ['Pending ⏳', 'badge-pending'],
+      working: ['Reading… 🌀', 'badge-working'],
+      done: ['Extracted ✨', 'badge-done'],
+      error: ['Error ⚠️', 'badge-error'],
+    };
+
+    function loadImage(url) {
+      return new Promise((res, rej) => {
+        const img = new Image();
+        img.onload = () => res(img);
+        img.onerror = rej;
+        img.src = url;
+      });
+    }
+
+    async function handleFiles(fileList) {
+      const files = Array.from(fileList || []).filter((f) => f && f.type.startsWith('image/'));
+      if (!files.length) return;
+      let firstNew = null;
+      for (const file of files) {
+        const url = URL.createObjectURL(file);
+        try {
+          const img = await loadImage(url);
+          const name = (!file.name || file.name === 'image.png') ? `pasted-${++pasteCount}.png` : file.name;
+          const item = { id: ++itemId, file, name, url, img, rotation: 0, crop: null, zoom: 1, view: { x: 0, y: 0 }, status: 'pending', text: null };
+          items.push(item);
+          if (!firstNew) firstNew = item;
+        } catch (_) {
+          URL.revokeObjectURL(url);
+        }
+      }
+      if (!firstNew) return;
+      previewContainer.classList.remove('hidden');
+      previewContainer.classList.add('flex');
+      if (!active) activate(items.indexOf(firstNew));
+      else { renderQueue(); refreshOutput(); }
+    }
+
+    function saveActive() {
+      if (!active) return;
+      active.rotation = rotationDegree;
+      active.crop = crop;
+      active.zoom = zoom;
+      active.view = { ...view };
+    }
+
+    function activate(i) {
+      saveActive();
+      active = items[i];
+      currentFile = active.file;
+      srcImg = active.img;
+      rotationDegree = active.rotation;
+      crop = active.crop;
+      zoom = active.zoom;
+      view = { ...active.view };
+      buildRotatedCanvas();
+      renderCanvas();
+      renderQueue();
+      refreshOutput();
+    }
+
+    function renderQueue() {
+      const multi = items.length > 1;
+      queueWrap.classList.toggle('hidden', !multi);
+      extractAllBtn.classList.toggle('hidden', !multi);
+      extractAllBtn.textContent = `✨ Extract All Images (${items.length})`;
+      extractBtn.textContent = multi ? '✨ Extract This Image' : '✨ Extract Text';
+      queueCount.textContent = items.length;
+      $('exportAllBtn').classList.toggle('hidden', !multi);
+      queue.replaceChildren(...items.map((it, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip' + (it === active ? ' on' : '');
+        b.title = it.name;
+        if (it === active) b.setAttribute('aria-current', 'true');
+        b.addEventListener('click', () => { if (it !== active) activate(items.indexOf(it)); });
+        const img = document.createElement('img');
+        img.src = it.url; img.alt = '';
+        const n = document.createElement('span');
+        n.className = 'chip-name'; n.textContent = `${i + 1}. ${it.name}`;
+        const [label, cls] = BADGES[it.status];
+        const st = document.createElement('span');
+        st.className = 'badge ' + cls; st.textContent = label;
+        b.append(img, n, st);
+        return b;
+      }));
+    }
+
+    /* ---------- Output area: this image vs. all images ---------- */
+    function combinedText() {
+      return items
+        .map((it, i) => (it.text != null ? `--- [Image ${i + 1}: ${it.name}] ---\n${it.text}` : null))
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
+    function refreshOutput() {
+      if (items.length < 2) outView = 'single';
+      viewToggle.classList.toggle('hidden', items.length < 2);
+      viewToggle.classList.toggle('flex', items.length >= 2);
+      viewSingleBtn.classList.toggle('active', outView === 'single');
+      viewAllBtn.classList.toggle('active', outView === 'all');
+      outputText.value = outView === 'all'
+        ? (allOverride !== null ? allOverride : combinedText())
+        : (active && active.text != null ? active.text : '');
+    }
+
+    outputText.addEventListener('input', () => {
+      if (outView === 'single' && active) {
+        if (active.text != null || outputText.value !== '') active.text = outputText.value;
+        allOverride = null;
+      } else if (outView === 'all') {
+        allOverride = outputText.value;
+      }
+    });
+    viewSingleBtn.addEventListener('click', () => { outView = 'single'; refreshOutput(); });
+    viewAllBtn.addEventListener('click', () => { outView = 'all'; refreshOutput(); });
+
+    /* ---------- Rotation: bake it into a full-res canvas ---------- */
+    // Full-resolution canvas with rotation baked in (used for display, cropping and OCR)
+    function rotateCanvas(img, deg) {
+      const swap = deg === 90 || deg === 270;
+      const w = swap ? img.naturalHeight : img.naturalWidth;
+      const h = swap ? img.naturalWidth : img.naturalHeight;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.translate(w / 2, h / 2);
+      ctx.rotate((deg * Math.PI) / 180);
+      ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+      return c;
+    }
+
+    function buildRotatedCanvas() {
+      rotatedCanvas = rotateCanvas(srcImg, rotationDegree);
+    }
+
+    rotateBtn.addEventListener('click', () => {
+      if (!srcImg) return;
+      rotationDegree = (rotationDegree + 90) % 360;
+      crop = null; // coordinates change with rotation, so start the crop fresh
+      resetView();
+      buildRotatedCanvas();
+      renderCanvas();
+    });
+
+    // "Remove" takes the active image out of the queue
+    clearBtn.addEventListener('click', () => {
+      if (!active) return;
+      const i = items.indexOf(active);
+      URL.revokeObjectURL(active.url);
+      items.splice(i, 1);
+      active = null;
+      allOverride = null;
+      if (!items.length) {
+        currentFile = null; srcImg = null; rotatedCanvas = null; crop = null;
+        resetView();
+        previewContainer.classList.add('hidden');
+        previewContainer.classList.remove('flex');
+        fileInput.value = '';
+        renderQueue();
+        return;
+      }
+      activate(Math.min(i, items.length - 1));
+    });
+
+    /* ---------- Mode toggle & reset ---------- */
+    function setMode(snip) {
+      snipMode = snip;
+      snipModeBtn.classList.toggle('active', snip);
+      fullModeBtn.classList.toggle('active', !snip);
+      cropCanvas.classList.toggle('snip', snip);
+      modeHint.textContent = snip
+        ? '✨ Drag on the picture to snip a word or sentence. Drag the corners to resize, or drag inside to move.'
+        : '🖼️ Full image mode: the whole picture will be read. Your snip is saved if you switch back.';
+      renderCanvas();
+    }
+    snipModeBtn.addEventListener('click', () => setMode(true));
+    fullModeBtn.addEventListener('click', () => setMode(false));
+    resetCropBtn.addEventListener('click', () => { crop = null; renderCanvas(); });
+
+    /* ---------- Canvas drawing (zoom + pan aware) ---------- */
+    // Crop coordinates always live in rotatedCanvas (source) pixels, so zooming
+    // and panning only change how they are drawn, never what they are.
+    function resetView() { zoom = 1; view = { x: 0, y: 0 }; }
+
+    function clampView() {
+      view.x = Math.min(Math.max(view.x, 0), dw * (zoom - 1));
+      view.y = Math.min(Math.max(view.y, 0), dh * (zoom - 1));
+    }
+
+    function renderCanvas() {
+      if (!rotatedCanvas) return;
+      const maxW = Math.max(120, canvasWrap.clientWidth - 20);
+      const maxH = 360;
+      const ratio = Math.min(maxW / rotatedCanvas.width, maxH / rotatedCanvas.height, 1);
+      dw = Math.max(1, Math.round(rotatedCanvas.width * ratio));
+      dh = Math.max(1, Math.round(rotatedCanvas.height * ratio));
+      cropCanvas.width = dw;
+      cropCanvas.height = dh;
+      cropCanvas.style.width = dw + 'px';
+      cropCanvas.style.height = dh + 'px';
+      baseScale = rotatedCanvas.width / dw;
+      srcPerPx = baseScale / zoom;
+      clampView();
+
+      cropCtx.clearRect(0, 0, dw, dh);
+      cropCtx.imageSmoothingQuality = 'high';
+      // Draw only the visible slice of the full-resolution image (stays sharp when zoomed)
+      cropCtx.drawImage(rotatedCanvas, view.x * srcPerPx, view.y * srcPerPx, dw * srcPerPx, dh * srcPerPx, 0, 0, dw, dh);
+
+      if (snipMode && crop) {
+        const r = cropToDisplay(crop);
+        // dim everything outside the selection (even-odd path handles boxes that leave the view)
+        cropCtx.fillStyle = 'rgba(74, 62, 61, 0.38)';
+        cropCtx.beginPath();
+        cropCtx.rect(0, 0, dw, dh);
+        cropCtx.rect(r.x, r.y, r.w, r.h);
+        cropCtx.fill('evenodd');
+        // dotted pastel box
+        cropCtx.lineWidth = 2.5;
+        cropCtx.setLineDash([2, 6]);
+        cropCtx.lineCap = 'round';
+        cropCtx.strokeStyle = '#FFB7C5';
+        cropCtx.strokeRect(r.x, r.y, r.w, r.h);
+        cropCtx.setLineDash([]);
+        // corner handles
+        for (const [hx, hy] of corners(r)) {
+          cropCtx.beginPath();
+          cropCtx.arc(hx, hy, 6, 0, Math.PI * 2);
+          cropCtx.fillStyle = '#fff';
+          cropCtx.fill();
+          cropCtx.lineWidth = 2.5;
+          cropCtx.strokeStyle = '#FF9EAA';
+          cropCtx.stroke();
+        }
+      }
+
+      // UI sync
+      const pct = Math.round(zoom * 100);
+      zoomSlider.value = pct;
+      zoomLabel.textContent = pct + '%';
+      panToolBtn.classList.toggle('active', panTool);
+      cropCanvas.classList.toggle('snip', snipMode && !panTool);
+      cropCanvas.classList.toggle('pan', zoom > 1 && (!snipMode || panTool));
+      updateCropInfo();
+    }
+
+    function updateCropInfo() {
+      if (snipMode && crop) {
+        cropInfo.textContent = `✂️ Snip: ${Math.round(crop.w)} × ${Math.round(crop.h)} px`;
+      } else if (!snipMode && crop) {
+        cropInfo.textContent = '🖼️ Whole image (snip saved)';
+      } else {
+        cropInfo.textContent = '🖼️ Whole image selected';
+      }
+    }
+
+    // source px  ->  viewport px (accounts for zoom + pan)
+    const cropToDisplay = (c) => ({ x: c.x / srcPerPx - view.x, y: c.y / srcPerPx - view.y, w: c.w / srcPerPx, h: c.h / srcPerPx });
+    const corners = (r) => [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]];
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+    /* ---------- Zoom controls ---------- */
+    // Zoom keeping the point under (ax, ay) fixed on screen
+    function setZoom(z, ax = dw / 2, ay = dh / 2) {
+      if (!rotatedCanvas) return;
+      z = clamp(z, 1, 4);
+      const sx = (ax + view.x) * srcPerPx, sy = (ay + view.y) * srcPerPx;
+      zoom = z;
+      const next = baseScale / zoom;
+      view.x = sx / next - ax;
+      view.y = sy / next - ay;
+      renderCanvas();
+    }
+    zoomInBtn.addEventListener('click', () => setZoom(zoom + 0.25));
+    zoomOutBtn.addEventListener('click', () => setZoom(zoom - 0.25));
+    zoomSlider.addEventListener('input', () => setZoom(zoomSlider.value / 100));
+    zoomResetBtn.addEventListener('click', () => { resetView(); renderCanvas(); });
+    panToolBtn.addEventListener('click', () => { panTool = !panTool; renderCanvas(); });
+
+    cropCanvas.addEventListener('wheel', (e) => {
+      if (!rotatedCanvas) return;
+      e.preventDefault();
+      const p = pointerPos(e);
+      setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), p.x, p.y);
+    }, { passive: false });
+
+    cropCanvas.addEventListener('dblclick', (e) => {
+      if (!rotatedCanvas) return;
+      const p = pointerPos(e);
+      if (e.shiftKey) setZoom(zoom - 0.75, p.x, p.y);
+      else if (zoom >= 4) { resetView(); renderCanvas(); }
+      else setZoom(zoom + 0.75, p.x, p.y);
+    });
+
+    cropCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space' || !rotatedCanvas) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return;
+      e.preventDefault();
+      spaceDown = true;
+    });
+    window.addEventListener('keyup', (e) => { if (e.code === 'Space') spaceDown = false; });
+
+    /* ---------- Pointer interaction (mouse + touch + pen) ---------- */
+    // Returns viewport coords (x, y) plus source-image coords (sx, sy, clamped to the image)
+    function pointerPos(e) {
+      const rect = cropCanvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (cropCanvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (cropCanvas.height / rect.height);
+      return {
+        x, y,
+        sx: clamp((x + view.x) * srcPerPx, 0, rotatedCanvas ? rotatedCanvas.width : 0),
+        sy: clamp((y + view.y) * srcPerPx, 0, rotatedCanvas ? rotatedCanvas.height : 0),
+      };
+    }
+
+    cropCanvas.addEventListener('pointerdown', (e) => {
+      if (!rotatedCanvas) return;
+      e.preventDefault();
+      cropCanvas.setPointerCapture(e.pointerId);
+      const p = pointerPos(e);
+
+      // Pan: Full Image Mode, ✋ Pan toggle, Space held, or middle/right button
+      if (!snipMode || panTool || spaceDown || e.button === 1 || e.button === 2) {
+        if (zoom > 1) {
+          drag = { type: 'pan', px: p.x, py: p.y, vx: view.x, vy: view.y };
+          cropCanvas.classList.add('panning');
+        }
+        return;
+      }
+
+      if (crop) {
+        const r = cropToDisplay(crop);
+        const cs = corners(r);
+        const sc = [[crop.x, crop.y], [crop.x + crop.w, crop.y], [crop.x, crop.y + crop.h], [crop.x + crop.w, crop.y + crop.h]];
+        for (let i = 0; i < cs.length; i++) {
+          if (Math.hypot(p.x - cs[i][0], p.y - cs[i][1]) <= HANDLE) {
+            drag = { type: 'resize', ax: sc[3 - i][0], ay: sc[3 - i][1], prev: crop };
+            return;
+          }
+        }
+        if (p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h) {
+          drag = { type: 'move', ox: p.sx - crop.x, oy: p.sy - crop.y, w: crop.w, h: crop.h };
+          return;
+        }
+      }
+      drag = { type: 'new', sx: p.sx, sy: p.sy, prev: crop };
+    });
+
+    cropCanvas.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const p = pointerPos(e);
+      if (drag.type === 'pan') {
+        view.x = drag.vx - (p.x - drag.px);
+        view.y = drag.vy - (p.y - drag.py);
+      } else if (drag.type === 'move') {
+        crop = {
+          x: clamp(p.sx - drag.ox, 0, rotatedCanvas.width - drag.w),
+          y: clamp(p.sy - drag.oy, 0, rotatedCanvas.height - drag.h),
+          w: drag.w, h: drag.h,
+        };
+      } else {
+        const x0 = drag.type === 'new' ? drag.sx : drag.ax;
+        const y0 = drag.type === 'new' ? drag.sy : drag.ay;
+        crop = { x: Math.min(x0, p.sx), y: Math.min(y0, p.sy), w: Math.abs(p.sx - x0), h: Math.abs(p.sy - y0) };
+      }
+      renderCanvas();
+    });
+
+    function endDrag() {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      cropCanvas.classList.remove('panning');
+      // Accidental tiny selection (a click or double-click): keep the previous crop
+      if ((d.type === 'new' || d.type === 'resize') && crop &&
+          (crop.w / srcPerPx < MIN_CROP || crop.h / srcPerPx < MIN_CROP)) {
+        crop = d.prev || null;
+      }
+      renderCanvas();
+    }
+    cropCanvas.addEventListener('pointerup', endDrag);
+    cropCanvas.addEventListener('pointercancel', endDrag);
+
+    window.addEventListener('resize', renderCanvas);
+
+    /* ---------- Build the image that goes to Tesseract ---------- */
+    // Phone photos are huge (12MP+) and OCR time grows with pixel count. Shrinking to ~2200px on the
+    // long edge keeps text readable but makes each image several times faster.
+    function capSize(canvas, max = 2200) {
+      const m = Math.max(canvas.width, canvas.height);
+      if (m <= max) return canvas;
+      const r = max / m;
+      const c = document.createElement('canvas');
+      c.width = Math.round(canvas.width * r);
+      c.height = Math.round(canvas.height * r);
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(canvas, 0, 0, c.width, c.height);
+      return c;
+    }
+
+    // Builds the image Tesseract reads for any item: its own rotation, plus its crop in Snipping Mode.
+    function sourceFor(item) {
+      const rc = rotateCanvas(item.img, item.rotation);
+      const c = snipMode ? item.crop : null;
+      if (!c || c.w < 1 || c.h < 1) return capSize(rc).toDataURL('image/png');
+
+      const cx = Math.round(c.x), cy = Math.round(c.y);
+      const cw = Math.max(1, Math.min(Math.round(c.w), rc.width - cx));
+      const ch = Math.max(1, Math.min(Math.round(c.h), rc.height - cy));
+
+      // Upscale small snips (up to 3x) and add white padding: both help Tesseract on single words
+      const up = Math.max(1, Math.min(3, 80 / ch));
+      const pad = 12;
+      const out = document.createElement('canvas');
+      out.width = Math.round(cw * up) + pad * 2;
+      out.height = Math.round(ch * up) + pad * 2;
+      const ctx = out.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, out.width, out.height);
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(rc, cx, cy, cw, ch, pad, pad, Math.round(cw * up), Math.round(ch * up));
+      return capSize(out).toDataURL('image/png');
+    }
+
+    function getProcessedImageSource() {
+      saveActive();
+      return active ? sourceFor(active) : '';
+    }
+
+    /* ---------- Tesseract ---------- */
+    // Logger defined at top level so every worker can use it
+    function makeLogger(lang) {
+      return (m) => {
+        if (m.status === 'recognizing text') {
+          statusText.innerText = `${batchLabel}Extracting text... ${Math.round(m.progress * 100)}%`;
+          if (batchTotal > 1) barFill.style.width = `${((batchIndex + m.progress) / batchTotal) * 100}%`;
+        } else if (m.status.includes('loading tesseract core')) {
+          statusText.innerText = 'Loading OCR engine...';
+        } else if (m.status.includes('loading language traineddata')) {
+          statusText.innerText = `Downloading language data (${lang})...`;
+        } else {
+          statusText.innerText = m.status;
+        }
+      };
+    }
+
+    const STRICT_WHITELIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?';
+
+    async function createWorkerFor(lang, strict) {
+      const worker = await Tesseract.createWorker(lang, 1, {
+        ...TESS_PATHS,
+        logger: makeLogger(lang),
+        errorHandler: (e) => console.error('Tesseract worker error:', e),
+      });
+      if (strict) {
+        // Dynamic whitelist: only letters, digits, space and . , ! ?
+        try { await worker.setParameters({ tessedit_char_whitelist: STRICT_WHITELIST }); }
+        catch (e) { console.warn('Could not set whitelist', e); }
+      }
+      return worker;
+    }
+
+    // Regex cleanup for stray symbols / gibberish from non-text image areas
+    function cleanText(raw) {
+      let t = (raw || '').replace(/\r\n?/g, '\n');
+      // 1. Keep letters (any language), numbers, whitespace and . , ! ? ' " - (plus curly quotes)
+      t = t.replace(/[^\p{L}\p{N}\s.,!?'"\-\u2018\u2019\u201C\u201D]/gu, ' ');
+      // 2. Drop isolated single-character non-letter symbols (digits and ! ? are kept)
+      t = t.replace(/(^|\s)[^\p{L}\p{N}\s!?](?=\s|$)/gmu, '$1');
+      // 3. Tidy each line, drop lines with no letters/digits, collapse blank lines
+      t = t.split('\n')
+           .map((l) => l.replace(/[ \t]{2,}/g, ' ').trim())
+           .filter((l) => l === '' || /[\p{L}\p{N}]/u.test(l))
+           .join('\n')
+           .replace(/\n{3,}/g, '\n\n');
+      return t.trim();
+    }
+
+    // One worker for the whole batch. Try the selected language; on ANY failure
+    // (init or recognize), retry the remaining images with English.
+    async function runOcrMany(selectedLang, count, getSrc, strict, cb) {
+      let worker = null, i = 0, lang = selectedLang;
+      const loop = async () => {
+        for (; i < count; i++) {
+          batchIndex = i; batchTotal = count;
+          batchLabel = count > 1 ? `Image ${i + 1}/${count} · ` : '';
+          cb.onStart(i);
+          const { data } = await worker.recognize(getSrc(i));
+          cb.onDone(i, data.text);
+        }
+      };
+      try {
+        worker = await createWorkerFor(lang, strict);
+        await loop();
+      } catch (err) {
+        console.warn(`OCR failed for "${selectedLang}"`, err);
+        if (selectedLang === 'eng') throw err;
+
+        statusText.innerText = `"${selectedLang}" failed. Retrying with English...`;
+        if (worker) { try { await worker.terminate(); } catch (_) {} worker = null; }
+
+        lang = 'eng';
+        worker = await createWorkerFor('eng', strict);
+        await loop(); // resumes at the image that failed
+      } finally {
+        if (worker) { try { await worker.terminate(); } catch (_) {} }
+      }
+      return { usedLang: lang };
+    }
+
+    function setBusy(b) {
+      busy = b;
+      extractBtn.disabled = b;
+      extractAllBtn.disabled = b;
+    }
+
+    async function runExtraction(targets, all) {
+      if (!targets.length || busy) return;
+      saveActive();
+      setBusy(true);
+      statusBox.classList.remove('hidden');
+      statusText.innerText = 'Initializing OCR engine...';
+      barWrap.classList.toggle('hidden', targets.length < 2);
+      barFill.style.width = '0%';
+      allOverride = null;
+      outView = all ? 'all' : 'single';
+      let noiseOnly = 0;
+      const selectedLang = langSelect.value;
+      const strict = charMode.value === 'strict';
+
+      try {
+        const { usedLang } = await runOcrMany(selectedLang, targets.length, (i) => sourceFor(targets[i]), strict, {
+          onStart: (i) => { targets[i].status = 'working'; renderQueue(); },
+          onDone: (i, raw) => {
+            const clean = cleanToggle.checked;
+            const out = clean ? cleanText(raw) : raw;
+            if (clean && out === '' && raw.trim() !== '') noiseOnly++;
+            targets[i].text = out;
+            targets[i].status = 'done';
+            barFill.style.width = `${((i + 1) / targets.length) * 100}%`;
+            renderQueue();
+            refreshOutput();
+          },
+        });
+
+        const bits = [all ? `Done! ${targets.length} images extracted 🎀` : 'Completed successfully! 🎀'];
+        if (usedLang !== selectedLang) bits.push(`Used English (${selectedLang} was unavailable).`);
+        if (noiseOnly) bits.push(`${noiseOnly === 1 ? 'One image' : noiseOnly + ' images'} had only noise. Try zooming in, snipping closer, or turn off Clean Text.`);
+        statusText.innerText = bits.join(' ');
+      } catch (err) {
+        console.error(err);
+        targets.forEach((it) => { if (it.status === 'working') it.status = 'error'; });
+        renderQueue();
+        const msg = (err && err.message) ? err.message : String(err);
+        statusText.innerText = 'Error: ' + msg + ' — check your internet connection and open via Live Server (not file://).';
+      } finally {
+        batchTotal = 0; batchLabel = '';
+        setBusy(false);
+      }
+    }
+
+    extractBtn.addEventListener('click', () => { if (active) runExtraction([active], false); });
+    extractAllBtn.addEventListener('click', () => runExtraction([...items], true));
+
+    /* ---------- Copy / Download ---------- */
+    copyBtn.addEventListener('click', () => {
+      if (!outputText.value) return;
+      navigator.clipboard.writeText(outputText.value);
+      copyBtn.innerText = '✅ Copied!';
+      setTimeout(() => (copyBtn.innerText = '📋 Copy'), 2000);
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      if (!outputText.value) return;
+      const blob = new Blob([outputText.value], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'extracted-text.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+      /* ---------- Fullscreen proofreading modal ---------- */
+    let modalFont = 18;
+    let modalShowImg = true;
+    let lastFocus = null;
+
+    const modalOpen = () => !modal.classList.contains('hidden');
+
+    function applyModalFont() {
+      modalText.style.fontSize = modalFont + 'px';
+      fontLabel.textContent = modalFont + 'px';
+    }
+
+    function applyModalImgToggle() {
+      const show = modalShowImg && !!active;
+      modalImgPane.classList.toggle('hidden', !show);
+      modalBody.classList.toggle('two', show);
+      modalImgToggle.textContent = modalShowImg ? '🖼️ Hide image' : '🖼️ Show image';
+      modalImgToggle.classList.toggle('hidden', !active);
+    }
+
+    function openModal() {
+      lastFocus = document.activeElement;
+      saveActive();
+      modalText.value = outputText.value;
+      applyModalFont();
+      if (active) {
+        modalImg.src = sourceFor(active); // exactly what Tesseract read (the snip, or the whole image)
+        modalCaption.textContent = `${items.indexOf(active) + 1}. ${active.name}` + (snipMode && active.crop ? ' (snip)' : '');
+      }
+      applyModalImgToggle();
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      document.body.style.overflow = 'hidden';
+      modalText.focus();
+    }
+
+    function closeModal() {
+      if (!modalOpen()) return;
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      document.body.style.overflow = '';
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+
+    expandBtn.addEventListener('click', openModal);
+    $('modalCloseBtn').addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modalOpen()) closeModal(); });
+
+    // Edits in the modal flow straight back to the main output (and to the stored per-image text)
+    modalText.addEventListener('input', () => {
+      outputText.value = modalText.value;
+      outputText.dispatchEvent(new Event('input'));
+    });
+
+    $('fontDownBtn').addEventListener('click', () => { modalFont = Math.max(12, modalFont - 2); applyModalFont(); });
+    $('fontUpBtn').addEventListener('click', () => { modalFont = Math.min(40, modalFont + 2); applyModalFont(); });
+    modalImgToggle.addEventListener('click', () => { modalShowImg = !modalShowImg; applyModalImgToggle(); });
+
+    $('modalCopyBtn').addEventListener('click', () => {
+      if (!modalText.value) return;
+      navigator.clipboard.writeText(modalText.value);
+      const b = $('modalCopyBtn');
+      b.innerText = '✅ Copied!';
+      setTimeout(() => (b.innerText = '📋 Copy Text'), 2000);
+    });
+
+    $('modalDownloadBtn').addEventListener('click', () => {
+      if (!modalText.value) return;
+      const blob = new Blob([modalText.value], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'extracted-text.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+      /* ---------- PDF export (jsPDF) ---------- */
+    const PDF = { margin: 54, bodySize: 11, lineH: 15 };
+    let pdfBusy = false;
+
+    function notify(msg) {
+      statusBox.classList.remove('hidden');
+      barWrap.classList.add('hidden');
+      statusText.innerText = msg;
+    }
+
+    function pdfLib() {
+      const lib = window.jspdf && window.jspdf.jsPDF;
+      if (!lib) notify('The PDF library did not load. Check your internet connection and refresh the page.');
+      return lib;
+    }
+
+    // jsPDF's built-in fonts only cover Latin-1, so swap fancy punctuation and replace anything else
+    function pdfSafe(t) {
+      return String(t == null ? '' : t)
+        .replace(/[\u2018\u2019\u201B]/g, "'")
+        .replace(/[\u201C\u201D\u201E]/g, '"')
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/\u2026/g, '...')
+        .replace(/[\u00A0\t]/g, ' ')
+        .replace(/[^\u0000-\u00FF]/g, '?');
+    }
+
+    const baseName = (n) => ((n || 'image').replace(/\.[^.]+$/, '') || 'image').replace(/[\\/:*?"<>|]+/g, '_');
+    const tick = () => new Promise((r) => setTimeout(r, 30));
+
+    // Word-wrapped body text with automatic page breaks. Returns the next y position.
+    function drawText(doc, text, y) {
+      const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+      const m = PDF.margin, maxW = W - m * 2;
+      for (const raw of pdfSafe(text).replace(/\r\n?/g, '\n').split('\n')) {
+        if (raw.trim() === '') { y += PDF.lineH * 0.7; continue; }
+        const divider = /^--- \[Image .*\] ---$/.test(raw.trim());
+        doc.setFont('helvetica', divider ? 'bold' : 'normal');
+        doc.setFontSize(divider ? 12 : PDF.bodySize);
+        if (divider) { doc.setTextColor(212, 96, 122); y += 6; } else doc.setTextColor(74, 62, 61);
+        for (const ln of doc.splitTextToSize(raw, maxW)) {
+          if (y > H - m - 10) { doc.addPage(); y = m; }
+          doc.text(ln, m, y);
+          y += PDF.lineH;
+        }
+      }
+      return y;
+    }
+
+    function addFooters(doc) {
+      const n = doc.getNumberOfPages();
+      const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+      for (let i = 1; i <= n; i++) {
+        doc.setPage(i);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(140, 120, 118);
+        doc.text('Snip & Read', PDF.margin, H - 28);
+        doc.text(`Page ${i} of ${n}`, W - PDF.margin, H - 28, { align: 'right' });
+      }
+    }
+
+    // The picture as the user sees it: rotated, plus the snip if Snipping Mode has one (no OCR padding)
+    function imageCanvasFor(item) {
+      const rc = rotateCanvas(item.img, item.rotation);
+      const c = snipMode ? item.crop : null;
+      let out = rc;
+      if (c && c.w >= 1 && c.h >= 1) {
+        const cx = Math.min(Math.round(c.x), rc.width - 1), cy = Math.min(Math.round(c.y), rc.height - 1);
+        const cw = Math.max(1, Math.min(Math.round(c.w), rc.width - cx));
+        const ch = Math.max(1, Math.min(Math.round(c.h), rc.height - cy));
+        out = document.createElement('canvas');
+        out.width = cw; out.height = ch;
+        out.getContext('2d').drawImage(rc, cx, cy, cw, ch, 0, 0, cw, ch);
+      }
+      out = capSize(out, 2400);
+      const flat = document.createElement('canvas'); // JPEG has no alpha, so flatten onto white
+      flat.width = out.width; flat.height = out.height;
+      const ctx = flat.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, flat.width, flat.height);
+      ctx.drawImage(out, 0, 0);
+      return flat;
+    }
+
+    /* 1) Extracted text -> formatted PDF */
+    function downloadTextPdf(text) {
+      const JsPDF = pdfLib();
+      if (!JsPDF) return;
+      if (!text || !text.trim()) { notify('Nothing to export yet. Extract some text first. 🌸'); return; }
+      const doc = new JsPDF({ unit: 'pt', format: 'a4' });
+      const W = doc.internal.pageSize.getWidth(), m = PDF.margin;
+
+      // pastel title band
+      doc.setFillColor(255, 232, 221);
+      doc.rect(0, 0, W, 80, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(22);
+      doc.setTextColor(212, 96, 122);
+      doc.text('Extracted Text', m, 42);
+      const sub = (outView === 'all' && items.length > 1) ? `${items.length} images` : (active ? active.name : '');
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(74, 62, 61);
+      doc.text(pdfSafe(`${sub}${sub ? '  |  ' : ''}${new Date().toLocaleDateString()}`), m, 62);
+      doc.setDrawColor(255, 183, 197);
+      doc.setLineWidth(1.5);
+      doc.line(m, 72, W - m, 72);
+
+      drawText(doc, text, 108);
+      addFooters(doc);
+      doc.save('extracted-text.pdf');
+    }
+
+    /* 2) Current image (or snip) -> single A4 page PDF, aspect ratio preserved */
+    function saveImageAsPdf() {
+      const JsPDF = pdfLib();
+      if (!JsPDF) return;
+      if (!active) { notify('Add a picture first. 🌸'); return; }
+      saveActive();
+      const canvas = imageCanvasFor(active);
+      const doc = new JsPDF({ orientation: canvas.width > canvas.height ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
+      const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), pad = 28;
+      const s = Math.min((W - pad * 2) / canvas.width, (H - pad * 2) / canvas.height, 3);
+      const w = canvas.width * s, h = canvas.height * s;
+      doc.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', (W - w) / 2, (H - h) / 2, w, h);
+      doc.save(baseName(active.name) + (snipMode && active.crop ? '-snip' : '') + '.pdf');
+    }
+
+    /* 3) Whole queue -> one multi-page PDF (image/snip + its text, per image) */
+    async function exportAllPdf() {
+      const JsPDF = pdfLib();
+      if (!JsPDF || pdfBusy || !items.length) return;
+      pdfBusy = true;
+      $('exportAllBtn').disabled = true;
+      try {
+        saveActive();
+        const doc = new JsPDF({ unit: 'pt', format: 'a4' });
+        const W = doc.internal.pageSize.getWidth(), m = PDF.margin, maxW = W - m * 2;
+        for (let i = 0; i < items.length; i++) {
+          notify(`Building PDF... image ${i + 1}/${items.length}`);
+          await tick();
+          const it = items[i];
+          if (i > 0) doc.addPage();
+
+          doc.setFillColor(255, 232, 221);
+          doc.rect(0, 0, W, 64, 'F');
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(14);
+          doc.setTextColor(212, 96, 122);
+          doc.text(`Image ${i + 1} of ${items.length}`, m, 28);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(10);
+          doc.setTextColor(74, 62, 61);
+          doc.text(doc.splitTextToSize(pdfSafe(it.name + (snipMode && it.crop ? ' (snip)' : '')), maxW)[0], m, 46);
+
+          const canvas = imageCanvasFor(it);
+          const s = Math.min(maxW / canvas.width, 300 / canvas.height, 3);
+          const w = canvas.width * s, h = canvas.height * s;
+          doc.addImage(canvas.toDataURL('image/jpeg', 0.9), 'JPEG', m + (maxW - w) / 2, 80, w, h);
+
+          let y = 80 + h + 30;
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(12);
+          doc.setTextColor(212, 96, 122);
+          doc.text('Extracted text', m, y);
+          y += 20;
+          if (it.text != null && it.text.trim() !== '') {
+            drawText(doc, it.text, y);
+          } else {
+            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(PDF.bodySize);
+            doc.setTextColor(140, 120, 118);
+            doc.text(it.text == null ? '(not extracted yet)' : '(no text found)', m, y);
+          }
+        }
+        addFooters(doc);
+        doc.save('snip-and-read-export.pdf');
+        notify(`PDF saved with ${items.length} images 🎀`);
+      } catch (err) {
+        console.error(err);
+        notify('Could not build the PDF: ' + ((err && err.message) || err));
+      } finally {
+        pdfBusy = false;
+        $('exportAllBtn').disabled = false;
+      }
+    }
+
+    $('pdfBtn').addEventListener('click', () => downloadTextPdf(outputText.value));
+    $('modalPdfBtn').addEventListener('click', () => downloadTextPdf(modalText.value));
+    $('imgPdfBtn').addEventListener('click', saveImageAsPdf);
+    $('exportAllBtn').addEventListener('click', exportAllPdf);
+
+    /* ================================================================
+       TAB SWITCHING + FILE-TO-PDF CONVERTER
+       ================================================================ */
+    const tabOcr = document.getElementById('tabOcr');
+    const tabPdf = document.getElementById('tabPdf');
+    const panelOcr = document.getElementById('panelOcr');
+    const panelPdf = document.getElementById('panelPdf');
+    function switchTab(which) {
+      const isOcr = which === 'ocr';
+      tabOcr.classList.toggle('active', isOcr);
+      tabPdf.classList.toggle('active', !isOcr);
+      panelOcr.classList.toggle('hidden', !isOcr);
+      panelPdf.classList.toggle('hidden', isOcr);
+    }
+    tabOcr.addEventListener('click', () => switchTab('ocr'));
+    tabPdf.addEventListener('click', () => switchTab('pdf'));
+
+    // Restrict paste to OCR tab only
+    const _origPaste = window.onpaste;
+    // (paste listener already exists; we guard it)
+    // Re-bind: the original paste is in the script; we add a check via monkey-patch of the handler
+    // Actually the original paste is: window.addEventListener('paste', ...)
+    // We'll leave it; add a note that when panelOcr is hidden we skip - done by checking in a new wrapper.
+    // For simplicity, the original paste fires always; images only matter on OCR tab.
+
+    const pdfDropZone = document.getElementById('pdfDropZone');
+    const pdfFileInput = document.getElementById('pdfFileInput');
+    const pdfQueueList = document.getElementById('pdfQueueList');
+    const pdfQueueEmpty = document.getElementById('pdfQueueEmpty');
+    const pdfQueueCount = document.getElementById('pdfQueueCount');
+    const pdfMergeBtn = document.getElementById('pdfMergeBtn');
+    const pdfClearAllBtn = document.getElementById('pdfClearAllBtn');
+    const pdfStatusBox = document.getElementById('pdfStatusBox');
+    const pdfStatusText = document.getElementById('pdfStatusText');
+    const pdfPageSize = document.getElementById('pdfPageSize');
+    const pdfOrientation = document.getElementById('pdfOrientation');
+    const pdfMargins = document.getElementById('pdfMargins');
+
+    let pdfItems = [];
+    let pdfId = 0;
+    let pdfConverting = false;
+
+    const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp']);
+    const DOC_EXTS = new Set(['docx', 'doc']);
+    const TXT_EXTS = new Set(['txt']);
+
+    function fileKind(file) {
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+      if (IMAGE_EXTS.has(ext) || (file.type && file.type.startsWith('image/'))) return 'image';
+      if (DOC_EXTS.has(ext) || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
+      if (TXT_EXTS.has(ext) || file.type === 'text/plain') return 'txt';
+      return null;
+    }
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+    function pdfNotify(msg) {
+      pdfStatusBox.classList.remove('hidden');
+      pdfStatusText.textContent = msg;
+    }
+    function getMarginPts() {
+      const v = pdfMargins.value;
+      if (v === 'none') return 18;
+      if (v === 'narrow') return 36;
+      return 54;
+    }
+    function getPageOpts() {
+      return {
+        format: pdfPageSize.value === 'letter' ? 'letter' : 'a4',
+        orientation: pdfOrientation.value === 'landscape' ? 'landscape' : 'portrait',
+        unit: 'pt',
+      };
+    }
+
+    pdfDropZone.addEventListener('click', () => pdfFileInput.click());
+    pdfDropZone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pdfFileInput.click(); }
+    });
+    pdfFileInput.addEventListener('change', (e) => {
+      addPdfFiles(e.target.files);
+      pdfFileInput.value = '';
+    });
+    pdfDropZone.addEventListener('dragover', (e) => { e.preventDefault(); pdfDropZone.classList.add('bg-[#FFF3F5]'); });
+    pdfDropZone.addEventListener('dragleave', () => pdfDropZone.classList.remove('bg-[#FFF3F5]'));
+    pdfDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      pdfDropZone.classList.remove('bg-[#FFF3F5]');
+      if (e.dataTransfer.files.length) addPdfFiles(e.dataTransfer.files);
+    });
+
+    function addPdfFiles(fileList) {
+      const files = Array.from(fileList || []);
+      let added = 0;
+      for (const file of files) {
+        const kind = fileKind(file);
+        if (!kind) {
+          pdfNotify('Skipped unsupported file: ' + file.name);
+          continue;
+        }
+        if (kind === 'docx' && file.name.toLowerCase().endsWith('.doc') && !file.name.toLowerCase().endsWith('.docx')) {
+          pdfNotify('"' + file.name + '" is a legacy .doc file. Please save it as .docx first (Mammoth requires DOCX).');
+          continue;
+        }
+        const item = {
+          id: ++pdfId,
+          file,
+          name: file.name || ('file-' + pdfId),
+          size: file.size,
+          kind,
+          url: kind === 'image' ? URL.createObjectURL(file) : null,
+        };
+        pdfItems.push(item);
+        added++;
+      }
+      if (added) {
+        renderPdfQueue();
+        pdfNotify('Added ' + added + ' file' + (added > 1 ? 's' : '') + ' to the queue 🌸');
+      }
+    }
+
+    function removePdfItem(id) {
+      const idx = pdfItems.findIndex((it) => it.id === id);
+      if (idx < 0) return;
+      const it = pdfItems[idx];
+      if (it.url) URL.revokeObjectURL(it.url);
+      pdfItems.splice(idx, 1);
+      renderPdfQueue();
+    }
+    function movePdfItem(id, dir) {
+      const idx = pdfItems.findIndex((it) => it.id === id);
+      if (idx < 0) return;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= pdfItems.length) return;
+      const tmp = pdfItems[idx];
+      pdfItems[idx] = pdfItems[newIdx];
+      pdfItems[newIdx] = tmp;
+      renderPdfQueue();
+    }
+    function clearPdfQueue() {
+      pdfItems.forEach((it) => { if (it.url) URL.revokeObjectURL(it.url); });
+      pdfItems = [];
+      renderPdfQueue();
+      pdfNotify('Queue cleared.');
+    }
+    pdfClearAllBtn.addEventListener('click', clearPdfQueue);
+
+    function renderPdfQueue() {
+      const n = pdfItems.length;
+      pdfQueueCount.textContent = n;
+      pdfMergeBtn.disabled = n === 0 || pdfConverting;
+      pdfClearAllBtn.classList.toggle('hidden', n === 0);
+      pdfQueueEmpty.classList.toggle('hidden', n > 0);
+      pdfQueueList.replaceChildren(...pdfItems.map((it, i) => {
+        const row = document.createElement('div');
+        row.className = 'pdf-row';
+        row.dataset.id = it.id;
+        const typeCls = it.kind === 'image' ? 'img' : (it.kind === 'txt' ? 'txt' : 'doc');
+        const typeLabel = it.kind === 'image' ? 'IMAGE' : (it.kind === 'txt' ? 'TXT' : 'DOCX');
+        row.innerHTML = `
+          <span class="pdf-type ${typeCls}">${typeLabel}</span>
+          <div class="flex-1 min-w-0">
+            <div class="fname" title="${it.name.replace(/"/g, '&quot;')}">${i + 1}. ${it.name}</div>
+            <div class="meta">${formatSize(it.size)}</div>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" class="pill-btn text-xs bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-2.5 py-1" data-act="up" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button type="button" class="pill-btn text-xs bg-[#FFE8DD] hover:bg-[#FFD9CC] text-[#4A3E3D] px-2.5 py-1" data-act="down" title="Move down" ${i === n - 1 ? 'disabled' : ''}>↓</button>
+            <button type="button" class="pill-btn text-xs bg-[#FFC857] hover:bg-[#FFBE3A] text-[#4A3E3D] px-3 py-1" data-act="convert">📄 Convert to PDF</button>
+            <button type="button" class="pill-btn text-xs bg-[#FFB7C5] hover:bg-[#FF9EAA] text-[#4A3E3D] px-2.5 py-1" data-act="remove" title="Remove">✕</button>
+          </div>
+        `;
+        row.querySelector('[data-act="up"]').addEventListener('click', () => movePdfItem(it.id, -1));
+        row.querySelector('[data-act="down"]').addEventListener('click', () => movePdfItem(it.id, 1));
+        row.querySelector('[data-act="convert"]').addEventListener('click', () => convertSinglePdf(it));
+        row.querySelector('[data-act="remove"]').addEventListener('click', () => removePdfItem(it.id));
+        return row;
+      }));
+    }
+
+    function loadImageFromFile(file) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not load image')); };
+        img.src = url;
+      });
+    }
+    async function extractTextFromDocx(file) {
+      if (typeof mammoth === 'undefined') {
+        throw new Error('Mammoth.js did not load. Check your internet connection.');
+      }
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return (result.value || '').trim();
+    }
+    async function extractTextFromTxt(file) {
+      return await file.text();
+    }
+
+    function addImageToDoc(doc, img, margin) {
+      const W = doc.internal.pageSize.getWidth();
+      const H = doc.internal.pageSize.getHeight();
+      const maxW = W - margin * 2;
+      const maxH = H - margin * 2;
+      const s = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
+      const w = img.naturalWidth * s;
+      const h = img.naturalHeight * s;
+      const x = (W - w) / 2;
+      const y = (H - h) / 2;
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0);
+      let dataUrl;
+      if (Math.max(c.width, c.height) > 2400) {
+        const r = 2400 / Math.max(c.width, c.height);
+        const c2 = document.createElement('canvas');
+        c2.width = Math.round(c.width * r);
+        c2.height = Math.round(c.height * r);
+        c2.getContext('2d').drawImage(c, 0, 0, c2.width, c2.height);
+        dataUrl = c2.toDataURL('image/jpeg', 0.92);
+      } else {
+        dataUrl = c.toDataURL('image/jpeg', 0.92);
+      }
+      doc.addImage(dataUrl, 'JPEG', x, y, w, h);
+    }
+    function addTextToDoc(doc, text, margin, startY) {
+      const W = doc.internal.pageSize.getWidth();
+      const H = doc.internal.pageSize.getHeight();
+      const maxW = W - margin * 2;
+      const bodySize = 11;
+      const lineH = 15;
+      let y = startY != null ? startY : margin;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(bodySize);
+      doc.setTextColor(40, 40, 40);
+      const lines = pdfSafe(text).replace(/\r\n?/g, '\n').split('\n');
+      for (const raw of lines) {
+        if (raw.trim() === '') { y += lineH * 0.6; continue; }
+        const wrapped = doc.splitTextToSize(raw, maxW);
+        for (const ln of wrapped) {
+          if (y > H - margin - 20) { doc.addPage(); y = margin; }
+          doc.text(ln, margin, y);
+          y += lineH;
+        }
+      }
+      return y;
+    }
+    function addPageNumbers(doc, margin) {
+      const n = doc.getNumberOfPages();
+      const W = doc.internal.pageSize.getWidth();
+      const H = doc.internal.pageSize.getHeight();
+      for (let i = 1; i <= n; i++) {
+        doc.setPage(i);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(140, 120, 118);
+        doc.text('Page ' + i + ' of ' + n, W / 2, H - Math.max(12, margin * 0.4), { align: 'center' });
+      }
+    }
+
+    async function buildPdfFromItem(item, doc, isFirstPage) {
+      const margin = getMarginPts();
+      if (!isFirstPage) doc.addPage();
+      if (item.kind === 'image') {
+        const img = await loadImageFromFile(item.file);
+        addImageToDoc(doc, img, margin);
+      } else {
+        let text = '';
+        if (item.kind === 'docx') {
+          text = await extractTextFromDocx(item.file);
+        } else {
+          text = await extractTextFromTxt(item.file);
+        }
+        if (!text.trim()) {
+          doc.setFont('helvetica', 'italic');
+          doc.setFontSize(11);
+          doc.setTextColor(140, 120, 118);
+          doc.text('(No text content found in this document)', margin, margin + 20);
+        } else {
+          const W = doc.internal.pageSize.getWidth();
+          doc.setFillColor(255, 232, 221);
+          doc.rect(0, 0, W, 48, 'F');
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(12);
+          doc.setTextColor(212, 96, 122);
+          doc.text(doc.splitTextToSize(pdfSafe(item.name), W - margin * 2)[0], margin, 30);
+          addTextToDoc(doc, text, margin, 64);
+        }
+      }
+    }
+
+    async function convertSinglePdf(item) {
+      if (pdfConverting) return;
+      const JsPDF = window.jspdf && window.jspdf.jsPDF;
+      if (!JsPDF) {
+        pdfNotify('jsPDF did not load. Check your internet connection and refresh.');
+        return;
+      }
+      pdfConverting = true;
+      pdfMergeBtn.disabled = true;
+      pdfNotify('Converting "' + item.name + '"…');
+      try {
+        const opts = getPageOpts();
+        const doc = new JsPDF(opts);
+        await buildPdfFromItem(item, doc, true);
+        addPageNumbers(doc, getMarginPts());
+        doc.save(baseName(item.name) + '.pdf');
+        pdfNotify('Saved: ' + baseName(item.name) + '.pdf 🎀');
+      } catch (err) {
+        console.error(err);
+        pdfNotify('Error converting "' + item.name + '": ' + (err.message || err));
+      } finally {
+        pdfConverting = false;
+        pdfMergeBtn.disabled = pdfItems.length === 0;
+      }
+    }
+
+    async function convertMergePdf() {
+      if (pdfConverting || !pdfItems.length) return;
+      const JsPDF = window.jspdf && window.jspdf.jsPDF;
+      if (!JsPDF) {
+        pdfNotify('jsPDF did not load. Check your internet connection and refresh.');
+        return;
+      }
+      pdfConverting = true;
+      pdfMergeBtn.disabled = true;
+      try {
+        const opts = getPageOpts();
+        const doc = new JsPDF(opts);
+        for (let i = 0; i < pdfItems.length; i++) {
+          pdfNotify('Building PDF… ' + (i + 1) + '/' + pdfItems.length + ': ' + pdfItems[i].name);
+          await tick();
+          await buildPdfFromItem(pdfItems[i], doc, i === 0);
+        }
+        addPageNumbers(doc, getMarginPts());
+        doc.save('merged-documents.pdf');
+        pdfNotify('Merged PDF saved with ' + pdfItems.length + ' file' + (pdfItems.length > 1 ? 's' : '') + ' 🎀');
+      } catch (err) {
+        console.error(err);
+        pdfNotify('Error building merged PDF: ' + (err.message || err));
+      } finally {
+        pdfConverting = false;
+        pdfMergeBtn.disabled = pdfItems.length === 0;
+      }
+    }
+    pdfMergeBtn.addEventListener('click', convertMergePdf);
+
+  </script>
+</body>
+</html>
